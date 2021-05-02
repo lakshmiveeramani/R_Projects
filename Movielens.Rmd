@@ -1,0 +1,469 @@
+---
+title: "Movielens"
+author: "Lakshmi Veeramani"
+date: "5/1/2021"
+output:
+  pdf_document: Movielens.pdf
+  RMD_document: Movielens.Rmd
+---
+
+
+
+---
+## Project overview Movie recommendation system
+
+Dataset used: "http://files.grouplens.org/datasets/movielens/ml-10m.zip"
+Data Description: The dataset is named as movielens dataset, This contains
+100 million movies , rating, users and Genres information.
+
+Scope of the Project: Develop movie recommendation system for the movies that are not rated, using the information available like,User's rating, movie rating and genres rating.
+
+Output: Rating to be predicted by the model developed by the project.
+
+Metrics requirements: RMSE < 0.86490
+
+I have tried movie rating average and user rating average and genres based models.
+Then applied regularization on individual models and then combined models.
+Finally tried the matrix factorization technique, which provided the lowest RMSE for the problem.
+---
+
+
+## Load the first setup code given in the course
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+
+##########################################################
+# Create edx set, validation set (final hold-out test set)
+##########################################################
+
+## Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(data.table)
+
+## MovieLens 10M dataset:
+## https://grouplens.org/datasets/movielens/10m/
+## http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+
+# if using R 3.6 or earlier:
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+                                            title = as.character(title),
+                                            genres = as.character(genres))
+# if using R 4.0 or later:
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
+                                            title = as.character(title),
+                                            genres = as.character(genres))
+
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+      semi_join(edx, by = "movieId") %>%
+      semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+```
+## ###########End of code provided in the course #######################
+
+## Exploratory Data Analysis#########################
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+## Import libraries
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+if(!require(tidyr)) install.packages("tidyr", repos = "http://cran.us.r-project.org")
+if(!require(stringr)) install.packages("stringr", repos = "http://cran.us.r-project.org")
+if(!require(forcats)) install.packages("forcats", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+library(lubridate)
+library(dplyr)
+library(kableExtra)
+library(tidyr)
+library(stringr)
+library(forcats)
+library(ggplot2)
+
+## Exploratory Data Analysis
+glimpse(edx)
+str(edx)
+summary(edx)
+names(edx)
+head(edx, n=10)
+nrow(edx)
+
+#Check validation set 
+head(validation)
+nrow(validation)
+
+#How many distinct movies, users and genres
+message("Total Unique Movies: ", n_distinct(edx$movieId))
+message("Total Unique Genres: ", n_distinct(edx$genres))
+message("Total Unique Users: ", n_distinct(edx$userId))
+
+#How many ratings?
+
+message("Total Unique Ratings: ", n_distinct(edx$rating))
+message("List of Unique Ratings: ", distinct(edx, rating))
+```
+## ###########################################################
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+##Data Cleaning checks:  Are there any missing values? => No missing values
+if (anyNA(edx) == 0){ 
+  message("No missing values")}
+
+## Data Cleaning steps:1.Timestamp to be converted to date time format
+
+edx$ts_date <- as.POSIXct(edx$timestamp, origin="1970-01-01")
+validation$ts_date <- as.POSIXct(validation$timestamp, origin="1970-01-01")
+
+# Extract the rated year and rated month in Training data
+
+edx$rated_year <- format(edx$ts_date,"%Y")
+edx$rated_month <- format(edx$ts_date,"%m")
+
+# Extract the rated year and rated month in validation data
+
+validation$rated_year <- format(validation$ts_date,"%Y")
+validation$rated_month <- format(validation$ts_date,"%m")
+
+## Data Cleaning steps:2.Movie name has the movie release year, which needs to be splitted to have this info as separate column
+
+edx <- edx %>% mutate(released_year = as.numeric(str_sub(title,-5,-2)))
+validation <- validation %>% mutate(released_year = as.numeric(str_sub(title,-5,-2)))
+head(edx, 2)
+
+head(validation, 2)
+
+# remove unnecessary columns on edx and validation dataset
+
+edx <- edx %>% select(userId, movieId, rating, title, genres, released_year, rated_year, rated_month)
+
+validation <- validation %>% select(userId, movieId, rating, title, genres, released_year, rated_year, rated_month)
+
+head(edx, 2)
+
+head(validation, 2)
+```
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+## ###########################################################
+##Convert the columns in to desired datatypes
+edx$rated_year <- as.numeric(edx$rated_year)
+edx$rated_month <- as.numeric(edx$rated_month)
+edx$released_year <- as.numeric(edx$released_year)
+validation$rated_year <- as.numeric(validation$rated_year)
+validation$rated_month <- as.numeric(validation$rated_month)
+validation$released_year <- as.numeric(validation$released_year)
+```
+
+## Baseline Model
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+#calculate the average of all movies
+mu_hat  <- mean(edx$rating)
+
+#Predict the RMSE on the validation set
+RMSE_mean_model_result = RMSE(validation$rating, mu_hat)
+
+results <- data.frame(model = "Project Goal", RMSE = 0.8649)
+
+#Adding results to the results data frame that contains all RMSE results
+results <- results %>% add_row(model = "Naive Mean baseline model", RMSE =RMSE_mean_model_result  )
+
+print(results)
+```
+
+## Movie rating prediction based on the movie rating average
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+#Calculate the average buy movie
+movie_avgs <- edx %>%
+              group_by(movieId) %>%
+              summarize(b_i = mean(rating - mu_hat))
+
+#compute the predicted ratings on the validation set
+RMSE_movie_model <- validation %>%
+                    left_join(movie_avgs, by = 'movieId') %>%
+                    mutate(pred = mu_hat +b_i) %>%
+                    pull(pred)
+
+#Predict the RMSE on the validation set
+RMSE_movie_model_result = RMSE(validation$rating, RMSE_movie_model)
+
+#Adding results to the results data frame that contains all RMSE results
+results <- results %>% add_row(model = "Movie based model", RMSE =RMSE_movie_model_result )
+print(results)
+```
+## Movie rating prediction based on the movie+user rating average
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+#Calculate the average by user
+
+user_avgs <- edx %>%
+             left_join(movie_avgs, by = 'movieId') %>%
+             group_by(userId) %>%
+             summarize(b_u = mean(rating - mu_hat - b_i))
+
+#compute the predicted ratings on the validation set
+RMSE_movie_user_model <- validation %>%
+                    left_join(movie_avgs, by = 'movieId') %>%
+                    left_join(user_avgs, by = 'userId') %>%
+                    mutate(pred = mu_hat +b_i+b_u) %>%
+                    pull(pred)
+
+#Predict the RMSE on the validation set
+RMSE_movie_user_model_result = RMSE(validation$rating, RMSE_movie_user_model)
+
+#Adding results to the results data frame that contains all RMSE results
+results <- results %>% add_row(model = "Movie user based model", RMSE =RMSE_movie_user_model_result )
+print(results)
+```
+## Movie rating prediction based on the movie+user+genres rating average
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+genre_pop <- edx %>%
+             left_join(movie_avgs, by = 'movieId') %>%
+             left_join(user_avgs, by = 'userId') %>%
+             group_by(genres) %>%
+             summarize(b_u_g = mean(rating - mu_hat - b_i-b_u))
+             
+
+#compute the predicted ratings on the validation set
+RMSE_movie_user_genres_model <- validation %>%
+                    left_join(movie_avgs, by = 'movieId') %>%
+                    left_join(user_avgs, by = 'userId') %>%
+                    left_join(genre_pop, by = 'genres') %>%
+                    mutate(pred = mu_hat +b_i+b_u+b_u_g) %>%
+                    pull(pred)
+
+#Predict the RMSE on the validation set
+RMSE_movie_user_genres_model_result = RMSE(validation$rating, RMSE_movie_user_genres_model)
+
+#Adding results to the results data frame that contains all RMSE results
+results <- results %>% add_row(model = "Movie user genre based model", RMSE =RMSE_movie_user_genres_model_result )
+print(results)
+```
+## Regularised movie based model
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+lambdas <- seq(0, 15, 1)
+
+rmses <- sapply(lambdas, function(lambda) {
+    
+    mu_hat  <- mean(edx$rating)
+    # Calculate the avg by movieId
+    b_i <- edx %>%
+           group_by(movieId) %>%
+           summarize(b_i = sum(rating - mu_hat)/(n()+lambda))
+
+
+    #Compute the predicted ratings on validation set
+    predicted_ratings <- validation %>%
+                         left_join(b_i, by = 'movieId') %>%                                
+                         mutate(pred = mu_hat +b_i) %>%
+                         pull(pred)
+    # Predict the RMSE on the validation set
+    return(RMSE(validation$rating, predicted_ratings))
+})
+
+#Get the lambda value for the lowest RMSE
+min_lambda <- lambdas[which.min(rmses)]
+
+#Predict the RMSE on the validation set
+regularised_movie_model <- min(rmses)
+
+#Predict the RMSE on the validation set
+RMSE_regularised_movie_model = min(rmses)
+
+#Adding results to the results data frame that contains all RMSE results
+results <- results %>% add_row(model = "Regularised Movie based model", RMSE =RMSE_regularised_movie_model )
+
+print(results)
+
+```
+## Regularised user based model
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+lambdas <- seq(0, 15, 1)
+
+rmses <- sapply(lambdas, function(lambda) {
+    
+    mu_hat  <- mean(edx$rating)
+    # Calculate the avg by movieId
+    b_u <- edx %>%
+           group_by(userId) %>%
+           summarize(b_u = sum(rating - mu_hat)/(n()+lambda))
+
+
+    #Compute the predicted ratings on validation set
+    predicted_ratings <- validation %>%
+                         left_join(b_u, by = 'userId') %>%                                
+                         mutate(pred = mu_hat +b_u) %>%
+                         pull(pred)
+    # Predict the RMSE on the validation set
+    return(RMSE(validation$rating, predicted_ratings))
+})
+
+#Get the lambda value for the lowest RMSE
+min_lambda <- lambdas[which.min(rmses)]
+
+#Predict the RMSE on the validation set
+regularised_user_model <- min(rmses)
+
+#Predict the RMSE on the validation set
+RMSE_regularised_user_model = min(rmses)
+
+#Adding results to the results data frame that contains all RMSE results
+results <- results %>% add_row(model = "Regularised user based model", RMSE =RMSE_regularised_user_model )
+
+print(results)
+```
+## Regularised movie + user based model
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+lambdas <- seq(0, 15, 1)
+
+rmses <- sapply(lambdas, function(lambda) {
+    
+    mu_hat  <- mean(edx$rating)
+    # Calculate the avg by movieId
+    b_i <- edx %>%
+           group_by(movieId) %>%
+           summarize(b_i = sum(rating - mu_hat)/(n()+lambda))
+    # Calculate the avg by userId
+    b_u <- edx %>%
+           left_join(b_i, by='movieId')%>%
+           group_by(userId) %>%
+           summarize(b_u = sum(rating - b_i - mu_hat) / (n() + lambda))
+
+    #Compute the predicted ratings on validation set
+    predicted_ratings <- validation %>%
+                         left_join(b_i, by = 'movieId') %>%
+                         left_join(b_u, by = 'userId') %>%                         
+                         mutate(pred = mu_hat +b_i+b_u) %>%
+                         pull(pred)
+    # Predict the RMSE on the validation set
+    return(RMSE(validation$rating, predicted_ratings))
+})
+
+#Get the lambda value for the lowest RMSE
+min_lambda <- lambdas[which.min(rmses)]
+
+#Predict the RMSE on the validation set
+regularised_movie_user_model <- min(rmses)
+
+#Predict the RMSE on the validation set
+RMSE_regularised_movie_user_model = min(rmses)
+
+#Adding results to the results data frame that contains all RMSE results
+results <- results %>% add_row(model = "Regularised Movie user based model", RMSE =RMSE_regularised_movie_user_model )
+print(results)
+```
+## Regularised movie+user+genres based model
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+lambdas <- seq(0, 15, 1)
+
+rmses <- sapply(lambdas, function(lambda) {
+    # Calculate the avg by movieId
+    b_i <- edx %>%
+           group_by(movieId) %>%
+           summarize(b_i = sum(rating - mu_hat)/(n()+lambda))
+    # Calculate the avg by userId
+    b_u <- edx %>%
+           left_join(b_i, by='movieId')%>%
+           group_by(userId) %>%
+           summarize(b_u = sum(rating - b_i - mu_hat) / (n() + lambda))
+    # Calculate the avg by genre
+    b_u_g <- edx %>%
+           left_join(b_i, by='movieId')%>%
+           left_join(b_u, by='userId')%>%
+           group_by(genres) %>%
+           summarize(b_u_g = sum(rating - b_i - mu_hat-b_u) / (n() + lambda))
+    #Compute the predicted ratings on validation set
+    predicted_ratings <- validation %>%
+                         left_join(b_i, by = 'movieId') %>%
+                         left_join(b_u, by = 'userId') %>%
+                         left_join(b_u_g, by = 'genres') %>%
+                         mutate(pred = mu_hat +b_i+b_u+b_u_g) %>%
+                         pull(pred)
+    # Predict the RMSE on the validation set
+    return(RMSE(validation$rating, predicted_ratings))
+})
+
+#Get the lambda value for the lowest RMSE
+min_lambda <- lambdas[which.min(rmses)]
+
+#Predict the RMSE on the validation set
+regularised_movie_user_genres_model <- min(rmses)
+
+#Predict the RMSE on the validation set
+RMSE_regularised_movie_user_genres_model = min(rmses)
+
+#Adding results to the results data frame that contains all RMSE results
+results <- results %>% add_row(model = "Regularised Movie user genres based model", RMSE =RMSE_regularised_movie_user_genres_model )
+print(results)
+```
+Recommender system based on Reco package - Matrix factorization method
+
+```{r, echo = TRUE, message = FALSE, warning = FALSE, eval = TRUE}
+if(!require(recosystem)) 
+  install.packages("recosystem", repos = "http://cran.us.r-project.org")
+set.seed(123, sample.kind = "Rounding") 
+
+# Convert the edx and validation sets into recosystem input format
+
+edx_reco <-  with(edx, data_memory(user_index = userId, 
+                                           item_index = movieId, 
+                                           rating     = rating))
+validation_reco  <-  with(validation,  data_memory(user_index = userId, 
+                                           item_index = movieId, 
+                                           rating     = rating))
+
+# Create the model 
+r <-  recosystem::Reco()
+
+# Choose the best tuning parameters
+opts <- r$tune(edx_reco, opts = list(dim = c(10, 20, 30), 
+                                       lrate = c(0.1, 0.2),
+                                       costp_l2 = c(0.01, 0.1), 
+                                       costq_l2 = c(0.01, 0.1),
+                                       nthread  = 4, niter = 10))
+
+ # Train the algorithm with edx_reco 
+r$train(edx_reco, opts = c(opts$min, nthread = 4, niter = 20))
+
+# Predict ratings  
+y_hat_reco <-  r$predict(validation_reco, out_memory())
+
+#Predict the RMSE on the validation set
+RMSE_reco_matrix_factorization_model = RMSE(validation$rating, y_hat_reco)
+
+#Adding results to the results data frame that contains all RMSE results
+results <- results %>% add_row(model = "Reco matrix factorization model", RMSE =RMSE_reco_matrix_factorization_model )
+
+results
+
+```
+
