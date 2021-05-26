@@ -1,0 +1,20 @@
+---
+title: "Anomaly detection"
+author: "Lakshmi Veeramani"
+date: "5/10/2021"
+output: pdf_document
+spacing: single
+biblio-style: apsr
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+classoption: a4paper
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+urlcolor: blue
+fontsize: 10pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE, fig.align="center")
+```
+
