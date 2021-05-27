@@ -1,0 +1,489 @@
+---
+title: "Movie Recommendation System"
+author: "Mazen Hamdoun"
+date: "07/04/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+This documents serves to lay out the building blocks of a movie recommendation system model based on the provided data set. 
+
+The data set is comprised of movie ratings from different genres submitted by a multitude of users. 
+
+Model performance is determined by the Root Mean Squared Error (RMSE).
+
+Data exploration and visualization of data provide a clear indication of several effects that were used to construct the model, namely:  
+- Movie Effects: where movies tend to be rated higher or lower than other movies  
+- User Effects: where users tend to rate movies higher or lower than other users  
+- Genres Effects: where users have genres preferences, and therefore tend to rate then higher or lower than other genres  
+
+Regularization was used to penalize scarce data for all 3 effects listed above so that the influence of such data-driven anomalies on prediction is reduced.
+
+## Data Analysis and Visualization
+To assess whether the effects discussed above exist, multiple plots are produced supporting their inclusion in the model. 
+
+### Data Download and Description
+ ```{r download, echo=FALSE, warning=FALSE, message=FALSE, results=FALSE}
+
+#####                                         ##################  <------------------------------
+
+##### REMEMBER TO RESTORE DATA DOWNLOAD SECTION ##################  <------------------------------
+
+#Load necessary Libraries
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(parallel)) install.packages("parallel", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(parallel)
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+
+# if using R 3.6 or earlier:
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+                                           title = as.character(title),
+                                           genres = as.character(genres))
+# if using R 4.0 or later:
+#movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(movieId),
+                                           # title = as.character(title),
+                                           # genres = as.character(genres))
+
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+```
+
+The dataset has millions of records with the following data as seen by revealing the first few records from the training set (edx):
+```{r ds, echo=FALSE, warning=FALSE, message=FALSE}
+head(edx)
+```
+
+userId    : User ID that defines each unique user  
+movieId   : Movie ID that defines each unique movie  
+rating    : Rating assigned by the specific user to a given movie ranging from 1 (worst) to 5 (best)  
+timestamp : An integer which can be converted to a timestamp (date and time)  
+title     : The movie's title  
+genres    : All genres the movie belongs to separated by a pipe ("|")  
+
+The data has been split into 2 sets: training and validation (hold-out test) sets. The hold-out test set will only be used to produce 
+the final model RMSE.
+
+```{r Tidy_Data, echo=FALSE, warning=FALSE, message=FALSE, results=FALSE}
+#wrangle training data to split genres column into multiple rows (tidy form) and store for later reuse
+edx_tidy <- edx %>% separate(genres, as.character(c('1':'8')), sep = "\\|") %>% gather(genres_t,genres,as.character("1":"8"),  na.rm = T)  
+edx_tidy <- edx_tidy[,-6]
+
+#Validation set wrangling to tidy format 
+validation_tidy <- validation %>% separate(genres, as.character(c('1':'8')), sep = "\\|") %>% gather(genres_t,genres,as.character("1":"8"),  na.rm = T)  
+validation_tidy <- validation_tidy[,-6]
+```
+
+### Rating Counts
+The histogram shows the distribution of ratings by groups (within bins) of movieID in log base 10 scale
+
+```{r vis_movieID, echo=FALSE, warning=FALSE, message=FALSE}
+#Count by Movie ID
+edx %>% group_by(movieId) %>%
+  summarize(n=n()) %>% 
+  ggplot(aes(n)) + 
+  geom_histogram(bins = 30, color = "black") + 
+  scale_x_log10() + 
+  ggtitle("Movies")
+
+```
+
+**Finding: Some movies tend to have many more ratings than others**
+
+The histogram shows the distribution of ratings by groups (within bins) of userID in log base 10 scale
+
+```{r vis_userID, echo=FALSE, warning=FALSE, message=FALSE}
+#Count by User ID
+edx %>% group_by(userId) %>%
+  summarize(n=n()) %>% 
+  ggplot(aes(n)) + 
+  geom_histogram(bins = 30, color = "black") + 
+  scale_x_log10() + 
+  ggtitle("Users")
+
+```
+
+**Finding: Some users tend to rate many more movies than others**
+
+### Movie Effect
+
+```{r Vis_Movie_Eff, echo=FALSE, warning=FALSE, message=FALSE}
+edx %>% group_by(movieId) %>% summarise(Average=mean(rating)) %>% ggplot(aes(Average)) + geom_histogram( color = "black",bins = 20) + 
+  ggtitle("Average Movie Rating")
+ 
+```
+
+**Finding: The distribition of average movie ratings clearly indicates that some movies have higher ratings vs others, proving the need to model this effect**
+
+### User Effect
+
+```{r Vis_User_Eff, echo=FALSE, warning=FALSE, message=FALSE}
+edx %>% group_by(userId) %>% summarise(Average=mean(rating)) %>% ggplot(aes(Average)) + geom_histogram( color = "black",bins = 20) + 
+  ggtitle("Average User Rating")
+ 
+```
+
+**Finding: The distribition of average user ratings also indicates that some users tend to give  higher ratings vs others **
+
+### Genres preference Effect
+
+Users typically have preferences for particular genres of movies, and hence tend to rate them higher.
+
+The following plot shows a standardized plot of average ratings by genres of movies for a sample of 10,000 users. Users tend to watch more movies of genres they particularly prefer. Therefore, ratings are weighted by the number of movies per genres relative to total ratings for each user.  
+
+```{r Vis_Genres_Eff, echo=TRUE, warning=FALSE, message=FALSE}
+
+uid <- edx %>% distinct(userId) 
+
+#Sampling 10,000 users randomly for visualization
+set.seed(1,sample.kind = "Rounding")
+ug_rating <- edx_tidy[which(edx_tidy$userId %in% sample(uid$userId,10000,FALSE,NULL)),]  %>% group_by(userId,genres) %>%
+               summarise(Average=mean(rating),n=n())  
+
+ug_rating <- ug_rating %>% group_by(userId) %>% summarize(sum_wt=sum(n)) %>% 
+              inner_join(ug_rating,by="userId") %>% 
+              mutate(wtd_genres=(ug_rating$Average*ug_rating$n/sum_wt*100))
+
+ug_rating %>% ggplot(aes(as.character(userId),wtd_genres,fill=genres)) + geom_bar(stat = "identity",position=position_fill()) + xlab("User ID") + ylab("Weighted Genres Rating")
+
+```
+
+**Finding: Genres color bands are not aligned, therefore weighted ratings indicate that each user has specific movie genres preferences **
+
+The following genres by user Look-Up Table is created to allow for aggregation of results for the Genres effect later.
+
+```{r Gen_LUT, echo=FALSE, warning=FALSE, message=FALSE}
+# Build Genres LookUp Table (genres_LUT)
+
+# Obtain list of distinct genres
+genres_LUT<- edx %>% select(userId,genres) %>%  distinct()
+# Separate genres column into separate columns 
+genres_LUT <- genres_LUT %>% separate( genres ,paste("g",as.character(c('1':'8')),sep=""), sep = "\\|")
+# Create mapping for each combination of genres into its component genres 
+genres_LUT <-  genres_LUT %>% unite("t",g1:g8,sep = "|", na.rm=T, remove = F ) %>% gather(genres_t,genres,g1:g8,  na.rm = T)
+#Drop the genres column headings [g1 to g8] which are unnecessary
+genres_LUT <- genres_LUT[,-3] 
+head(genres_LUT)
+
+```
+
+### Methodology
+
+The model starts from the premise that the average rating is the initial prediction. 
+
+We gradually determine and add effects (movie, user and genres) to allow for more accurate prediction.
+
+The training data set (edx) is split into training and test sets to assess model performance
+
+```{r Train_Test l, echo=FALSE, warning=FALSE, message=FALSE}
+# Evaluation Metric (Loss) Function: Calculates Root Mean Squared Error
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+
+set.seed(1,sample.kind = "Rounding")
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.2,
+                                  list = FALSE)
+train_set <- edx[-test_index,]
+test_set <- edx[test_index,]
+
+#ensure test and train set movie/user ID's are consistent
+test_set <- test_set %>% 
+  semi_join(train_set, by = "movieId") %>%
+  semi_join(train_set, by = "userId") %>%
+  semi_join(train_set, by = c("userId","genres"))
+
+```
+
+Regularization is used to reduce the undesirable effects of lack of data (users/movies/genres with very few ratings) on the model's predictive ability.
+
+```{r Lambda_Range, echo=FALSE, warning=FALSE, message=FALSE}
+# lambda: regularization parameter that requires optimization
+lambda_step <- 0.25
+lambda_max <- 7
+lambda_min <- 1
+
+# range of lambdas that will be used for optimization
+lambdas <- seq(lambda_min, lambda_max, lambda_step)
+
+```
+
+The regularization parameter Lambda is optimized by splitting training data (train_set) into 2 subsets:  
+  - optimization training set (train_BS)  
+  - optimization testing set (test_BS)  
+ 
+```{r Train_Test_Opt, echo=FALSE, warning=FALSE, message=FALSE}
+
+set.seed(1,sample.kind = "Rounding")
+BS <- createDataPartition(y = train_set$rating, times = 1, p = 0.2,
+                          list = FALSE)
+
+train_BS <- train_set[-BS,]
+test_BS <- train_set[BS,]
+
+test_BS <- test_BS %>% 
+  semi_join(train_BS, by = "movieId") %>%
+  semi_join(train_BS, by = "userId") %>%
+  semi_join(train_BS, by = c("userId","genres"))
+
+```
+
+
+The following plot determines optimal Lambda (having the minimum RMSE) to be used in the model:
+
+```{r Optimize_Lambda, echo=FALSE, warning=FALSE, message=FALSE}
+
+lambda <- function(l){
+
+  #obtain expected value (mean) as base prediction
+  mu <- mean(train_BS$rating)
+  #regularize movie effect after removing average rating
+  b_i <- train_BS %>%
+    group_by(movieId) %>%
+    summarize(b_i = sum(rating - mu)/(n()+l))
+  #regularize user effect after removing average rating and movie effect
+  b_u <- train_BS %>%
+    left_join(b_i, by="movieId") %>%
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - b_i - mu)/(n()+l))
+  
+  #obtain genres effect
+  
+  #calculate effect for each genre/user combination  
+  train_bg <- left_join(train_BS, edx_tidy, by=c("movieId","userId")) %>% 
+    select(userId, movieId, timestamp=timestamp.y, title=title.y, genres=genres.y, rating=rating.y)
+  
+  
+  b_u_g_k <- train_bg %>%
+    left_join(b_i, by="movieId") %>%
+    left_join(b_u, by="userId") %>%
+    group_by(userId, genres) %>%
+    summarize(b_g_k = sum(rating - b_u - b_i - mu)/(n()+l))
+  
+  #calculate effect for the combined genres per user   
+  b_u_g <- inner_join(b_u_g_k, genres_LUT, by=c("userId","genres")) %>% group_by(userId,genres=t) %>% summarise(b_g=mean(b_g_k))
+  
+  #predict rating
+  predicted_ratings <-
+    test_BS %>%
+    left_join(b_i, by = "movieId") %>%
+    left_join(b_u, by = "userId") %>%
+    left_join(b_u_g, by = c("userId","genres")) %>%
+    mutate(pred = mu + b_i + b_u + b_g) %>%
+    pull(pred)
+  #return RMSE on the optimization test set for given lambda
+  return(RMSE(predicted_ratings, test_BS$rating))
+}
+
+# apply the range of lambdas to determine optimal lambda
+# NB mclapply allows parallel processing to speed computation time, hence is used instead of sapply
+res <- mclapply(lambdas,lambda)
+#flatten list of lists returned by mclapply to a numeric vector
+res <- flatten_dbl(res)
+
+
+qplot(lambdas, res)
+
+# optimal lambda has the min RMSE
+opt_lambda <- lambdas[which.min(res)]
+
+```
+
+Now, we train the model with our optimal lambda on the training set (train_set) and test model output on our test set (test_set).
+
+We commence by showing model performance when incorporating the movie effect to the average rating initially:
+
+```{r Train_Model_Movie , echo=FALSE, warning=FALSE, message=FALSE}
+
+#obtain expected value as main prediction
+mu <- mean(train_set$rating)
+#regularize movie effect after removing average rating
+b_i <- train_set %>%
+  group_by(movieId) %>%
+  summarize(b_i = sum(rating - mu)/(n()+opt_lambda))
+
+predicted_ratings <-
+  test_set %>%
+  left_join(b_i, by = "movieId")  %>%
+  mutate(pred = mu + b_i) %>%
+  pull(pred)
+pred_ratings <- RMSE(predicted_ratings, test_set$rating)
+
+```
+RMSE (movie effect) = `r pred_ratings`
+
+Model performance **improves** after adding the __*user effect*__:
+
+```{r Train_Model_User , echo=FALSE, warning=FALSE, message=FALSE}
+
+#regularized user effect after removing average rating and movie effect
+b_u <- train_set %>%
+  left_join(b_i, by="movieId") %>%
+  group_by(userId) %>%
+  summarize(b_u = sum(rating - b_i - mu)/(n()+opt_lambda))
+
+predicted_ratings <-
+  test_set %>%
+  left_join(b_i, by = "movieId") %>%
+  left_join(b_u, by = "userId") %>%
+  mutate(pred = mu + b_i + b_u ) %>%
+  pull(pred)
+pred_ratings <- RMSE(predicted_ratings, test_set$rating)
+```
+
+RMSE (adding user effect) = `r pred_ratings`
+
+Model performance improves **further** after adding the __*genres effect*__ : 
+
+```{r Train_Model_Genres , echo=FALSE, warning=FALSE, message=FALSE}
+
+#obtain genres effect
+
+  #calculate effect for each genre/user combination  
+train_bg <- left_join(train_set, edx_tidy, by=c("movieId","userId")) %>% 
+  select(userId, movieId, timestamp=timestamp.y, title=title.y, genres=genres.y, rating=rating.y)
+
+b_u_g_k <- train_bg %>%
+  left_join(b_i, by="movieId") %>%
+  left_join(b_u, by="userId") %>%
+  group_by(userId, genres) %>%
+  summarize(b_g_k = sum(rating - b_u - b_i - mu)/(n()+opt_lambda))
+
+#calculate effect for the combined genres per user   
+b_u_g <- inner_join(b_u_g_k, genres_LUT, by=c("userId","genres")) %>% group_by(userId,genres=t) %>% summarise(b_g=mean(b_g_k))
+
+#predict rating
+predicted_ratings <-
+  test_set %>%
+  left_join(b_i, by = "movieId") %>%
+  left_join(b_u, by = "userId") %>%
+  left_join(b_u_g, by = c("userId","genres")) %>%
+  mutate(pred = mu + b_i + b_u + b_g) %>%
+  pull(pred)
+#return RMSE on test set for optimal lambda
+pred_ratings <- RMSE(predicted_ratings, test_set$rating)
+
+```
+
+RMSE (adding genres effect) = `r pred_ratings`
+
+We now train the final model including all effects on the full training data set (edx):
+
+```{r Final_Model , echo=FALSE, warning=FALSE, message=FALSE}
+
+mu <- mean(edx$rating)
+#regularize movie effect after removing average rating
+b_i <- edx %>%
+  group_by(movieId) %>%
+  summarize(b_i = sum(rating - mu)/(n()+opt_lambda))
+#regularized user effect after removing average rating and movie effect
+b_u <- edx %>%
+  left_join(b_i, by="movieId") %>%
+  group_by(userId) %>%
+  summarize(b_u = sum(rating - b_i - mu)/(n()+opt_lambda))
+#genres effect
+#calculate effect for each genre/user combination  
+train_bg <- left_join(edx, edx_tidy, by=c("movieId","userId")) %>% 
+  select(userId, movieId, timestamp=timestamp.y, title=title.y, genres=genres.y, rating=rating.y)
+
+b_u_g_k <- train_bg %>%
+  left_join(b_i, by="movieId") %>%
+  left_join(b_u, by="userId") %>%
+  group_by(userId,genres) %>%
+  summarize(b_g_k = sum(rating - b_u - b_i - mu)/(n()+opt_lambda))
+
+#calculate effect for the combined genres per user  
+b_u_g <- inner_join(b_u_g_k, genres_LUT, by=c("userId","genres")) %>% group_by(userId,genres=t) %>% summarise(b_g=mean(b_g_k))
+
+```
+
+
+## Conclusion (Results)
+
+Running the model on the hold-out set (validation), we can be confident enough that its performance is satisfactory based on final performance.
+
+Note: Not all userId/genres combinations in the validation set also exist in the training set, hence we consider no improvement (ie we add zero the user/genres effect) to our prediction.
+```{r Result , echo=FALSE, warning=FALSE, message=FALSE , results=FALSE}
+
+#predict rating on validation set to obtain final RMSE
+#since not all 
+predicted_ratings <-
+  validation %>%
+  left_join(b_i, by = "movieId") %>%
+  left_join(b_u, by = "userId") %>%
+  left_join(b_u_g, by = c("userId","genres")) %>%
+  mutate(pred = mu + b_i + b_u + ifelse(is.na(b_g),0,b_g)) %>%
+  pull(pred)
+#return RMSE on validation set
+RMSE <- RMSE(predicted_ratings, validation$rating)
+``` 
+
+This provides a model result (RMSE) of: `r RMSE`
+
+However, if we remove user/genres combinations not existing in the training set, the final result is even better.
+
+```{r Final Result , echo=FALSE, warning=FALSE, message=FALSE , results=FALSE}
+
+validation_set <- validation %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId") %>%
+  semi_join(edx, by = c("userId","genres"))
+
+#predict rating on validation set to obtain final RMSE
+
+predicted_ratings <-
+  validation_set %>%
+  left_join(b_i, by = "movieId") %>%
+  left_join(b_u, by = "userId") %>%
+  left_join(b_u_g, by = c("userId","genres")) %>%
+  mutate(pred = mu + b_i + b_u + b_g) %>%
+  pull(pred)
+#return RMSE on validation set
+final_RMSE <- RMSE(predicted_ratings, validation_set$rating)
+``` 
+
+The final model result (RMSE) = `r final_RMSE`
+
