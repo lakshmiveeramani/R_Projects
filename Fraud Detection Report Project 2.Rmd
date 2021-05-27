@@ -1,0 +1,450 @@
+---
+title: "Fraud Detection Project - Harvard Capstone 2"
+author: "AIXQ"
+date: "05/01/2021"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: pygments
+    keep_tex: true
+  html_document: default
+---
+
+
+```{r, include=FALSE}
+#set up the overall environment
+knitr::opts_chunk$set(echo = TRUE, fig.align = 'center', cache=FALSE, cache.lazy = FALSE)
+getwd()
+setwd("C:/R_test/edx_harvard/project2")
+
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(e1071)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(MASS)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(rpart)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(rpart.plot)) install.packages("caret", repos = "http://cran.us.r-project.org")
+
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(tidyverse)
+library(caret)
+library(data.table)
+library(e1071)
+library(randomForest)
+library(MASS)
+library(rpart)
+library(rpart.plot)
+
+RNGkind(sample.kind = "Rounding")
+
+set.seed(2021 - 430)
+```
+\newpage
+
+# Introduction
+
+The project is to fulfll the requirement of Harvard Data Science. It uses the machine learning technique to detect the fraudulent transaction in a simulated dataset.  The dataset is prepared by simulating the payment transactions.  The key input include the names of customer who initiate the payment (origination) and the name of the person who received the transaction (destination). It also include the the customer's balance before and after the transactions (origination balance), as well the receiver's balance before and after the transaction (destination balance). It includes the transaction type and the transaction amount.  A flag (isFraud) is served as the indicator of the fraudulent transaction.  There is an additional variable (binary), isFlaggedFraud to indicate the prediction of the fraudulent transactions.  The transaction step is also included to indicate the transaction at each step. 
+
+# EDA and data profiling
+
+This section present the data filing results and the insights from EDA analysis.
+
+## load the master dataset
+
+```{r, echo=FALSE}
+data <- read.csv("PS_20174392719_1491204439457_log.csv")
+```
+
+The following provides the summary of the dataset.
+The step reflect the sequence of the transaction. However, it may not be an importance features, unless we use a function to indicate the transactions at each step.  Otherwise, step can be growing fast and going out of the current range.
+
+Type can be a useful variable for classification of the transactions.  This variable can be further explored, e.g., which transaction type contains more fraudulent transactions than others. 
+
+Amount can be also a useful features.  The fraudulent transaction may be associated with the level of the amount.
+
+NameOrig and namedest refers to customer's name, which may not be predictive to transactions.  There is also a potential to introduce compliance or fairness concerns if the fraudulent transactions can be linked to the customers' names after certain transactions.  Therefore, I decide to exclude these two features from training data.
+
+There are four variables related to the balance.  These features plus the amount variable can be used as predictors of the fraudulent transactions.  It may be further transformed to improve the predictiveness.
+
+The isFlaggedFraud is the predicted label of fraudulent transactions.  For our purposes, we may not need to use this features as we will need to build a machine learning model to create such indicators.
+
+```{r, echo=FALSE}
+summary(data)
+```
+The following is a snapshot of the data structures.  The are 6362620 records in the dataset, and 11 variables.  Given the size of the data, we may need to split the data into training, test, and validation data to properly evaluate the model performance.
+
+```{r, echo=FALSE}
+str(data)
+#initial EDA analysis, categorical variables
+
+```
+
+## Univariate analysis
+
+The frequency of step is provided in the following chart. There is some seasonality effect in the steps.  And majority of the transactions are in the steps <400,  The transaction after step 400 decrease sharply.  It indicates that we may need to consider steps and fraud indicator when partition the data.
+
+```{r, echo=FALSE}
+data %>% ggplot(aes(step)) +
+  geom_bar()
+```
+
+The following chart illustrates the distribution of Type variable. Debit and Transfer only take a small portion out of all the transactions.  Cashin, cashout and payment are the three main transaction types.  We can further explore the distribution of fraudulent transactions per each transaction type through bivariate analysis.
+
+```{r, echo=FALSE}
+data %>% ggplot(aes(type)) +
+  geom_bar()
+```
+
+
+The distribution of the target variable shows that the data is very imbalanced, with very small bad rate.  The bad rate is 0.00129082 or 0.13%.
+
+```{r, echo=FALSE}
+data %>% ggplot(aes(isFraud)) +
+  geom_bar()
+```
+The bad rate in the master data set is 0.1% as shown in the following code.
+
+```{r, echo=FALSE}
+mean(data$isFraud)
+```
+## Bivariate analysis
+
+### Target vs. Type
+The distribution of Fraud per transaction types. The following contingence table evidences that frauds only exist in cash out and transfer. Therefore, I decided to remove cash_in, debit and payment from the data.
+
+```{r, echo=FALSE}
+table(data$type,data$isFraud)
+```
+### Target vs. Target Predictor
+Out of curiosity, I create the confusion matrix to examine the predictiveness of the isFlaggedFraud indicator.  The results however, shows that this indicator is not quite useful.  
+
+```{r, echo=FALSE}
+data$isFraud <- as.factor(data$isFraud)
+data$isFlaggedFraud <- as.factor(data$isFlaggedFraud)
+```
+
+The confusion matrix shows that the isFlaggedFraud predict many false positive signals.  The performance metrics are not very useful in this very imbalanced dataset.
+```{r, echo=FALSE}
+confusionMatrix(data$isFraud, data$isFlaggedFraud)
+```
+
+### Target vs. Amount
+The fraud transactions clusters in the lower end of the amounts. And the maximum of fraud is less than 1.25*10^7. As shown in the following graph, when the amount becomes large, there is no instance of fraud.  This is consistent with our intuition that the fraud tend to be small amount but may be higher frequencies.  When the transaction is large, it is likely that the transaction system will impose more robust checking regimes to ensure the transaction is legit.  The fraudsters on the other hand may try to exploit the weakness in the payment system when the transactions amount is smaller.
+
+```{r, echo=FALSE}
+data %>% ggplot(aes(amount,isFraud)) +
+  geom_point()
+```
+
+### Target vs transaction type
+The results is consistent with what we observed from contingency table.  Fraud only happen in the cash_out and transfer transactions.
+
+```{r, echo=FALSE}
+data %>% ggplot(aes(type,..count..)) +
+  geom_bar(aes(fill = isFraud), position = "dodge")
+```
+
+## Feature Engineering
+
+### Delete the irrelevant features
+
+for columns, delete the two features regarding the names, and the isflaggedfraud indicator; for rows, only keep cash out and transfer as both may have fraudulent transactions.
+
+```{r, echo=FALSE}
+data2 <- data
+
+head(data2,2)
+data2[4] <- NULL
+data2[5] <- NULL
+data2[8] <- NULL
+
+head(data2,2)
+
+data3 <- data2
+```
+
+```{r, echo=FALSE}
+data3 <- subset(data3, type %in% c('CASH_OUT','TRANSFER'))
+
+```
+
+Insights from the fraudulent transactions.  It is not very clear of what the relationship between amount newbalanceOrig, oldbalanceDest, and newbalanceDest when fraud is detected.  There is not a one to one match, and the variables do not sum up correctly. Even in the legit transactions (Fraud = 0), the amount, and the other balance variable do not add up either.
+
+```{r, echo=FALSE}
+head(data3,10)
+```
+
+Look at the fradulent transactions only, if there is any specific pattern. 
+
+We can observe the following patterns:
+1. for fraudulent transactions, it involves to transactions, the account usually initiate a transfer first and at the same step cash out subsequently in the same step
+2. frauds are more likey to happen in the accounts with zero balances
+3. cashout + oldbalanceDest = newbalanceDest, although there are cases that this equation may not hold.
+
+```{r, echo=FALSE, include=FALSE}
+#data_fraud <- subset(data3, isFraud == 1)
+#head(data_fraud,5)
+```
+
+# Model Development and Performance Evaluation
+
+## Partition data into training, test and validation samples
+
+Since the data are clustered at step < 400, I decided to use the last 10% of the data with respect to step as the validation dataset, and the left out 90% as the training dataset.  The training dataset will further split to training and test data.
+
+```{r, echo = FALSE}
+cutoff1 <- quantile(data3$step,0.9)
+
+#unit after 399 will be used as the validation sample, before 399 will be used as the master training sample
+# the master training sample will be further split into training and test based on 8:2 ratio.
+cutoff1
+
+#check the split of training data
+training_master <- subset(data3, data3$step < 399)
+
+#insights from the summary of training dataL Note that there are five different types of transactions
+#The two variables related to name may be served as joining key or indicator
+#the model may not use these indicator as predictors, unless we want to tag certain ID as highrisk
+#if that is the case, the risk should coming from the ML model results
+#but the name tag may not be used as predictors
+#Note that the variables are defined as X_orig and X_dest, what is the meaning of these two features?
+#The other category of naming convension if old vs new.  What is the exact meaning of these name conventions?
+#what is the difference between isfarud and isflaggedasFraud?  Is the second one coming from the developer's model?
+
+#from the discription of the data, the old/new represents the balance before and after the transactions.
+
+#the isflag is the actual fraud indicator, which will be used as the target variable
+```
+
+```{r, echo=FALSE}
+summary(training_master)
+```
+
+The top records in the training master dataset:
+
+```{r, echo=FALSE}
+#look at the records in the master training data
+head(training_master)
+
+```
+
+The rows and columns in the training_master dataset:
+
+```{r, echo=FALSE}
+#dimension of the master training dataset
+dim(training_master)
+
+```
+
+Split the data into validation dataset:
+
+```{r, echo=FALSE}
+validation <- subset(data3, data3$step >= 399)
+head(validation)
+dim(validation)
+
+```
+
+Internal check of the split of the data:
+
+```{r, echo=FALSE}
+#the ratio is consistent with the design, where it is 9:1 split for training and validation samples
+dim(validation)/dim(training_master)
+
+```
+
+Split the master training data into training and test at 80/20 split ratio.
+
+```{r, echo=FALSE, include=FALSE}
+######
+##partition training_master into training and test data
+######
+
+#PARTITION  DATA BASED on the target variable at 8:2 split
+
+set.seed(202104)
+#training.indices <- createDataPartition(training_master$isFraud, p = 0.8, list = FALSE)
+#training <- training_master[training.indices,]
+#test <- training_master[-training.indices,]
+#write.csv(training, 'training.csv')
+#write.csv(test, 'test.csv')
+#write.csv(validation, 'validation.csv')
+training <- read.csv('training.csv')
+test <- read.csv('test.csv')
+validation <- read.csv('validation.csv')
+
+```
+
+
+### Model1: GLM-Logistic Regression
+
+The coefficients and the significance of the GLM model is provided in the following table. We can see that all the coefficients are significant. However, there is a warming message that the model returns numerical 0 or 1. It may affect the model performance due to the imblanced data.
+
+```{r, echo=FALSE}
+training$isFraud <- as.factor(training$isFraud)
+model1 <- glm(isFraud ~. - step, data=training, family = binomial(link = logit))
+
+summary(model1)
+
+```
+#### model1 performance evaluation 
+
+Use 0.5 as the cutoff probability and generate the predicted fraud label as 0 or 1.  Then examine the performance from the confusion matrix.
+
+```{r, echo=FALSE}
+training$pred <- predict.glm(model1,training, type = "response")
+head(training)
+
+```
+
+```{r, echo=FALSE}
+training$pred_fraud <- ifelse(training$pred>0.5,1,0)
+head(training)
+```
+
+The recall is 13.6%, which is not quite satisfactory.  The precision is 79.4%, which show good precision rate. The overall performance is not up to the standard, because it only correctly labels 484 frauds, and the majority of the frauds (3076) are failed to be identified by the GLM model. The performance indicate the non-linear relationship in the underlying data.  The machine learning technique are more likely to be suitable to deal with the non-linear relationships.
+
+```{r, echo=FALSE}
+training$pred_fraud <- as.factor(training$pred_fraud)
+confusionMatrix(training$pred_fraud, training$isFraud)
+```
+
+### model2: GLM model with AIC feature selection (Optimization)
+
+In this model, I try to optimize the features selected in the model, in order to improve the parsimony of the regression model.  The results however shows that no variable can be removed.  It ends up with the same model as above model 1.
+
+```{r, echo=FALSE}
+
+model2 <- stepAIC(model1, direction = c("backward"))
+summary(model2)
+
+```
+### model3：decision tree   
+
+Here I fit a simple decision tree to make the model more interpretable. The parameters are set as the default.
+
+```{r, echo=FALSE}
+
+model3 <- rpart(isFraud ~. - step, data=training, method = 'class')
+
+```
+
+The following is the visualization of the decision tree:
+
+```{r, echo=FALSE}
+rpart.plot(model3, extra = 106)
+
+```
+
+
+The following table illustrate the minimum improvment criteria with the corresponding cross validation errors.  Note that the last set of observations reaches the smallest out of sample errors. So it is consistent with the default model selected.  From the above decision tree plots, the model is not over-complicated.  So I decided to accept this version as the final model and make predictions to evaluate the performance.
+
+```{r, echo=FALSE}
+model3$cptable
+
+```
+
+Feature importance of the decision tree: Type, old balance of the receiver, transaction amount are the top three features in the decision tree. The observation is consistent with what we have learned from the EDA analysis, where the type determines the likelihood the frauds, and the transaction amount and old balance ($0) appears associated with the frauds.
+
+```{r, echo=FALSE}
+model3$variable.importance
+
+```
+
+Deploying model 3 to make predictions in the training dataset. The predicted indicator are generated from the following line.  The response type is set as CLASS, so that it generates the binary indicator.
+
+```{r, echo=FALSE}
+training$pred_model3 <- predict(model3,training, type = 'class')
+
+```
+
+The following is the confusion matrix based on the predicted results (model 3) in the training data. Given the extremly imblanced data, I focus on the recall and precision.  In the training data, the recall is 0.5972, indicating that the model correctly identified around 60% of the total fraudulent transactions.  The precision is 94.5%, which is also very satisfactory in the fraud models,  On the other hand, the precision rate may indicate potential overfitting risk.  Further analysis is necessary to examine the model performance in the test and validation samples.
+
+```{r, echo=FALSE}
+confusionMatrix(training$pred_model3,training$isFraud)
+
+```
+
+### model4: randomforest model
+
+However, I cannot make it finish the training due to the limited computation power of my computer.  Another model I tried is the XGBoost. It is also resource intensitve and won't be finished the training as well.
+
+```{r, echo=FALSE}
+
+#model4 <-  randomForest(isFraud ~. - step, data=training, method = 'class')
+```
+
+
+## Model selection: Performance Comparision in the test and validation sample: GLM vs.Decision Tree 
+
+Given the superior performance in the training data from the Decision Tree over that from the GLM model, it may be safe to accept the decision tree as the final model. The interpretation of the decision tree is also very straightforward,  There are five layers in the decision tree and 11 ending notes.  Therefore, the interpretability is not a serious issue for this model.  It is even easier to interpret the decision tree than the GLM model.  
+
+To be scientifically accurate, I proceed with the performance evaluation of the two models (model1 and model3) based on the performance in the test and validation samples.  The recall and precision are the key criteria to evaluate the model performance.  The model with the better performance in the test and validation sample will be selected as the champion model.
+
+Model 1 GLM performance in test and validation sample. The recall is 13.54% and 13.55% in the test and validation sample respectively. The precision is satisfactory.  However, the priority is recall in my opinion.  The GLM in the test and validation samples are still inferior to the performance from the Decision Tree (model 3).
+
+Model 1 performance in test dataset:
+
+```{r, echo=FALSE}
+test$pred <- predict.glm(model1,test, type = "response")
+test$pred_fraud <- ifelse(test$pred>0.5, 1, 0)
+head(test)
+test$pred_fraud <- as.factor(test$pred_fraud)
+test$isFraud <- as.factor(test$isFraud)
+confusionMatrix(test$pred_fraud, test$isFraud)
+
+```
+
+Model 1 performance in Validation dataset:
+
+```{r, echo=FALSE}
+validation$pred <- predict.glm(model1,validation, type = "response")
+validation$pred_fraud <- ifelse(validation$pred>0.5,1,0)
+head(validation)
+validation$pred_fraud <- as.factor(validation$pred_fraud)
+validation$isFraud <- as.factor(validation$isFraud)
+confusionMatrix(validation$pred_fraud, validation$isFraud)
+
+```
+
+Model 3 Decision Tree test sample performance is provided in the following. The Decision Tree model correctly labeled 2875 fraudulent transactions out of 4553 total frauds. The recall rate is 61.79%, which is slightly greater than the the recall in the training sample.  The precision in the test sample is also satisfactory, and is in line with the precision in the training sample.
+
+```{r, echo=FALSE}
+test$pred_model3 <- predict(model3,test, type = 'class')
+confusionMatrix(test$pred_model3,test$isFraud)
+
+```
+Model 3 performance in the validation sample.  The recall rate in the validation sample for model 3 is 61.18%. The model identified 2303 fraudulent transactions out of the total 3764 frauds. The precision is 100%, which may be need further investigation.  There may be some fundamental changes in the underlying data, such that all the features point to a specific fraud pattern.
+
+```{r, echo=FALSE}
+validation$pred_model3 <- predict(model3,validation, type = 'class')
+confusionMatrix(validation$pred_model3,validation$isFraud)
+```
+
+\newpage
+
+# Conclusion
+
+The Decision Tree (model 3) show consistent results across the training/test/validation samples. The recall rate is around 60% and precision is at 90+%.  The performance is much improved from the GLM regression model (model 1).  The Decision tree model is also straightforward to interpret.  It consistent some if/else decision rules, and comprised of five layers of logic, with 11 ending notes.  
+
+There are some limitations in the Decision Tree approach:
+1. the decision tree is highly dependent on the patterns observed in the training data.  If the fraudulent pattern changes in the out of sample data.  The model may not produce satisfactory results (overfitting issue).  If such performance deteriorations are observed.  There should be additional EDA analysis or PSI analysis to deep dive the causes of data shifts, and may trigger model recalibration with the new data.
+2. the decision tree is not yet fine-tuned.  Hyperparameter tuning, CP optimiation to further trim the trees may be necessary and may improve the performance further.  
+3. Due to the computation resources constrains in my desktop, the more computation intensive ML model are not feasible to be trained.  XGB, RF or other clustering models can be further explored and may improve the performance because these models can incorporate more than one decision trees and will suffer less from the overfitting issues.
+
+Further improvements:
+1. Traing the ensembled trees to improve the overfitting issue;
+2. COnduct PSI analysis and CSI analysis to monitor the model performance and data shifts;
+3. Conduct Hyperparameter tuning to customize the decision tree rather than taking the default values.
+4. Purchase a more powerful computer or consider cloud based approach with higher computation capacity.
