@@ -1,0 +1,504 @@
+---
+title: "Breast Cancer Diagnosis Project"
+author: "Olivier Paratte"
+date: "28/01/2021"
+output:
+  pdf_document:
+    toc: no
+    latex_engine: pdflatex
+    toc_depth: 2
+    number_sections: yes
+    highlight: monochrome
+    dev: jpeg
+  html_document: default
+spacing: single
+biblio-style: apsr
+geometry: left=2cm,right=2cm,top=2cm,bottom=2cm
+classoption: a4paper
+mainfont: Arial
+mathfont: LiberationMono
+monofont: DejaVu Sans Mono
+urlcolor: blue
+fontsize: 10pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE, fig.align="center")
+```
+
+```{r package installation and libraries}
+# Install (if required) and open required package and libraries
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(readr)) install.packages("readr", repos = "http://cran.us.r-project.org")
+if(!require(corrplot)) install.packages("corrplot", repos = "http://cran.us.r-project.org")
+if(!require(RColorBrewer)) install.packages("RColorBrewer", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+if(!require(fpc)) install.packages("fpc", repos = "http://cran.us.r-project.org")
+if(!require(utils)) install.packages("utils", repos = "http://cran.us.r-project.org")
+if(!require(klaR)) install.packages("klaR", repos = "http://cran.us.r-project.org")
+if(!require(grid)) install.packages("grid", repos = "http://cran.us.r-project.org")
+if(!require(ggfortify)) install.packages("ggfortify", repos = "http://cran.us.r-project.org")
+if(!require(glmnet)) install.packages("glmnet", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+if(!require(nnet)) install.packages("nnet", repos = "http://cran.us.r-project.org")
+if (!require(matrixStats)) install.packages("matrixStats", repos = "http://cran.us.r-project.org")
+if(!require(scales)) install.packages("scales", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(caret)
+library(data.table)
+library(lubridate)
+library(caret)
+library(readr)
+library(corrplot)
+library(RColorBrewer)
+library(kableExtra)
+library(utils)
+library(fpc)
+library(factoextra)
+library(matrixStats)
+library(scales)
+```
+
+```{r Data download and preparation}
+# Download data
+data_url <- "http://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data"
+
+# download data and create data.frame
+wdbc_data <- fread(data_url)
+
+# add column names (based on WPBC.names)
+col_names <- c("id","diagnosis","radius_mean","texture_mean", "perimeter_mean",
+               "area_mean","smoothness_mean","compactness_mean","concavity_mean",
+               "concave_points_mean", "symmetry_mean","fractal_dimension_mean",
+               "radius_se","texture_se", "perimeter_se","area_se","smoothness_se",
+               "compactness_se", "concavity_se","concave_points_se","symmetry_se",
+               "fractal_dimension_se", "radius_worst","texture_worst",
+               "perimeter_worst", "area_worst","smoothness_worst",
+               "compactness_worst", "concavity_worst","concave_points_worst",
+               "symmetry_worst", "fractal_dimension_worst")
+
+colnames(wdbc_data) <- col_names
+```
+# Introduction
+## Overview
+This project is part of the HarvardX Data Science Capstone course and uses the Breast Cancer Wisconsin (Diagnostic) Data Set to build a prediction model using various machine learning methods.
+
+This report describes the various steps taken to analyse the data, the methods used to build the models and the evaluation of the models performance, it  includes 5 sections:
+
+1. Introduction
+2. Data exploration and analysis
+3. Model creation and validation
+4. Results 
+5. Conclusion
+
+## Projet goal
+The goal of this project is to create and test various models to predict whether a sample collected during a biopsy done using the fine needle aspirate (FNA) procedure is cancerous or not and indentify the one(s) with the best performance.
+
+For this project, the main metrics used to measure the performance of the diagnostic predictions are accuracy (proportion of correct prediction) and sensitivity (rate of false negatives).Trying to reach the maximum accuracy is rather obvious. You want the model to make as many correct predictions as possible. Sensitivity was selected second key metrics because of the potentially deadly consequences of a false negative test (not treating someone with breast cancer). Those metrics and others used to evaluate the models will be explained in more details in section 3.
+
+## Background information
+Fine needle aspiration (FNA) is a type of biopsy where a small amount of tissue or fluid from a suspicious area is withdrawn (aspirated) with a very thin, hollow needle attached to a syringe and is checked for cancer cells. Fine needle aspiration is relatively non-invasive, generally considered a safe procedure, complications are infrequent and the entire procedure from start to finish generally takes around 30 minutes. The biopsy sample may be examined under a microscope by a pathologist who will make a diagnostic and/or send to a lab for testing. 
+
+# Data exploration and analysis
+## Dataset infromation
+The features of the Breast Cancer Wisconsin (Diagnostic) data set used for this project are computed from a digitized image of a fine needle aspirate (FNA) of a breast mass. They describe characteristics of the cell nuclei present in the image.
+
+Data set link:
+
+http://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data
+
+Data set description:
+
+https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.names
+
+## Dataset dimensions
+```{r dataset dimensions, comment = '', results = 'asis'}
+# Display number of columns and rows
+cat("The Breast Cancer Wisconsin (Diagnostic) data set has",ncol(wdbc_data), "columns and", nrow(wdbc_data), "rows")
+```
+
+```{r missing values check, comment = '', results = 'asis'}
+# Check if there are missing values in the wdbc_data set
+if (any(is.na(wdbc_data))) {
+  print("they are as missing values in the data set ")
+} else {
+  print("they are no missing values in the data set")
+}
+```
+
+Each row corresponds to one biopsy and the features computed from one digitised image of a fine needle aspirate (FNA) of a breast mass as well as the diagnosis (M = malignant, B = benign). The column “diagnosis” is the outcome we want to predict. Here are the features and their characteristics:
+
+Data set structure:
+```{r wdbc_data structure}
+# wdbc_data structure
+str(wdbc_data)
+```
+\newpage
+## Data set attribute and features:
+Attribute Information:
+
+1. **id** 
+2. **diagnosis** (M = malignant, B = benign) 
+Ten real-valued features are computed for each cell nucleus 3-32):
+3. **radius**: Nucleus radius (mean of distances from center to points on the perimeter).
+4. **texture**: Nucleus texture (standard deviation of gray-scale values).
+5. **perimeter**: Nucleus perimeter.
+6. **area**: Nucleus area.
+7. **smoothness**: Nucleus smoothness (local variation in radius lengths).
+8. **compactness**: Nucleus compactness (perimeter^2/area - 1).
+9. **concavity**: Nucleus concavity (severity of concave portions of the contour).
+10. **concave_pts**: Number of concave portions of the nucleus contour.
+11. **symmetry**: Nucleus symmetry.
+12. **fractal_dim**: Nucleus fractal dimension ("coastline approximation" - 1).
+
+The mean, standard error and "worst" or largest (mean of the three largest values) of these features were computed for each image, resulting in 30 features. For instance, column 3 is Mean Radius, column 13 is Radius SE, column 23 is Worst Radius.
+
+We can also see the the graph below that 357 of the diagnosis are benign and 212 are malignant.
+```{r Diagnosis distribution, fig.height=4, fig.width=4}
+# Diagnosis distribution
+wdbc_data %>% ggplot(aes(diagnosis)) + 
+  geom_bar(fill = "#006699", color = "#ffffff") +
+  ggtitle("Diagnosis distribution") +
+  xlab("Diagnosis") +
+  ylab("Number of diagnosis") +
+  theme_bw(base_size = 11)
+```
+
+\newpage
+Features summary:  
+```{r Features summary 1}
+# Create table with summary of each features - transposed for easier display
+t(summary(wdbc_data[,3:32])) %>% kable(booktabs = T, format = "latex") %>%
+  kable_styling(position = "center", latex_options = c("scale_down", "striped"))
+```
+
+\newpage
+## Features analysis:
+The density plot below gives a general overview on the distribution of the 30 features. We can see that the data seems normally distributed.
+```{r, fig.height=9, fig.width=6}
+# Plot and facet wrap density plots for each feature - quick distribution overview
+wdbc_data %>% dplyr::select(-id,-diagnosis) %>%
+  gather("feature", "value") %>%
+  ggplot(aes(value)) +
+  geom_density(fill = "#006699", alpha = 1) +
+  facet_wrap(~ feature, scales = "free", ncol = 3) +
+  ggtitle("Density plots for each features") +
+  xlab("Feature values") +
+  ylab("Density") +
+  theme(legend.position = "bottom", 
+        panel.background = element_blank(), 
+        axis.text.x = element_blank(), 
+        axis.text.y = element_blank(),
+        legend.title=element_blank(),
+        strip.text = element_text(size=8))
+```
+\newpage
+The density plot below shows the distribution of the 30 features grouped by diagnostic. We can see that some features the density curves for benign and malignant are mostly overlapping and for other the 2 density curves are quite disjoint. We can also see that the features for malignant diagnostics seem to have a grater variance. This could be taken into consideration when building the prediction models.
+```{r, fig.height=9, fig.width=6}
+wdbc_data %>% dplyr::select(-id) %>%
+  gather("feature", "value", -diagnosis) %>%
+  ggplot(aes(value, fill = diagnosis)) +
+  geom_density(alpha = 0.6) +
+  facet_wrap(~ feature, scales = "free", ncol = 3) +
+  scale_fill_manual( values = c("#993300","#006699")) +
+  ggtitle("Density plots by diagnosis for each features") +
+  xlab("Feature values") +
+  ylab("Density") +
+  scale_fill_discrete(labels = c("Benign", "Malignant")) +
+  theme(legend.position = "bottom", 
+        panel.background = element_blank(), 
+        axis.text.x = element_blank(), 
+        axis.text.y = element_blank(),
+        legend.title=element_blank(),
+        strip.text = element_text(size=8))
+```
+\newpage
+The the 2 plots below shows the correlations between the 30 features for begin diagnostics (top) and malignant diagnostics (bottom). We can see that many variables are significnalty correlated with each others.
+```{r}
+# Features correlation for begin diagnostics
+benin <- wdbc_data %>% filter(diagnosis == "B")
+corrplot(cor(benin[,3:32]), method = "circle", order = "hclust", na.label = "NA", tl.cex = 0.6, tl.col = "black", tl.srt = 90, col = brewer.pal(n = 10, name = "RdBu"))
+```
+```{r}
+# Features correlation for malignant diagnostics
+malignant <- wdbc_data %>% filter(diagnosis == "M")
+corrplot(cor(malignant[,3:32]), method = "circle", order = "hclust", na.label = "NA", tl.cex = 0.6, tl.col = "black", tl.srt = 90, col = brewer.pal(n = 10, name = "RdBu"))
+```
+We can also see that the correlations between the features differs for begin diagnostics and malignant diagnostics. This could be taken into consideration when building the prediction models.
+\newpage
+
+## Principal Component Analysis (PCA)
+Principal Component Analysis (PCA) is a technique used to reduce the dimensionality of large data sets. The general idea is to reduce the dimension of the dataset while preserving important characteristics making it easier to explore to visualise. PCA also reduces the computational complexity of the model which makes machine learning algorithms run faster. 
+
+Reducing the number of components or variables used to build a model comes at the expense of accuracy but the trick is to balance the trade off between accuracy and simplicity. In other words, the purpose of PCA to reduce the number of variables while preserving as much information as possible.
+
+```{r PCA prep}
+# Convert diagnosis to a factor for model set
+wdbc_data$diagnosis <- as.factor(wdbc_data$diagnosis)
+
+# combine features and diagnosis into list object #
+brca <- list(x = wdbc_data[,3:32] %>% as.matrix(), y = wdbc_data$diagnosis)
+
+# Store PCA result in a pca object   
+wdbc_pca <- prcomp(wdbc_data[,3:32], center = TRUE, scale = TRUE)
+```
+
+The first component is determined because it accounts for the most variance, and each subsequent component is chosen according to the next greatest portion of variance accounted for. So component one will account for the most variance, component 2 will account for the second most variance, and so forth.
+```{r}
+# Table showing components 1-10
+summary(wdbc_pca)$importance [,1:10] %>% kable(booktabs = T, format = "latex") %>%
+  kable_styling(position = "center", latex_options = c("scale_down", "striped"))
+
+# Table showing components 11-20
+summary(wdbc_pca)$importance [,11:20] %>% kable(booktabs = T, format = "latex") %>%
+  kable_styling(position = "center", latex_options = c("scale_down", "striped"))
+
+# Table showing components 21-30
+summary(wdbc_pca)$importance [,21:30] %>% kable(booktabs = T, format = "latex") %>%
+  kable_styling(position = "center", latex_options = c("scale_down", "striped"))
+```
+
+The graph bellow shows of much variability (y-axis) is explained by individual components (x-axis). We can see that values drops exponentially. 
+```{r, fig.height=4, fig.width=4}
+# Plot % of explained variance by components
+data.frame(variance = summary(wdbc_pca)$importance[2,]) %>% rownames_to_column("PCA") %>% 
+  ggplot(aes(x = reorder(PCA, -variance), y = variance)) + 
+  geom_bar(stat = "identity", fill = "#006699", color = "#ffffff") +
+  ggtitle("Variance explained by components") +
+  xlab("Components") +
+  ylab("% of variance Explained") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90))
+```
+\newpage
+The graph below shows the cumulative variance explained for each subsequent component. We can see than 10 components explain 95% of variance (horizontal line).
+```{r, fig.height=4, fig.width=5}
+# Plot cumulative variance with line at 95%
+data.frame(variance = summary(wdbc_pca)$importance[3,]) %>% rownames_to_column("PCA") %>% 
+  ggplot( aes(reorder(PCA, variance), variance)) + 
+  geom_point(color = "#006699") +
+  ggtitle("Cumulative variance explained by components") +
+  xlab("Components") +
+  ylab("% of variance Explained") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  geom_hline(aes(yintercept = 0.95), color = "#993300", linetype = 2) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+The box plots below shows the first 10 principal components grouped by diagnosis. we can see that PC1 is the only
+component for which the interquartile ranges do not overlap which might one of the reasons why it explain
+44.2% of the variance.
+```{r, fig.height=4, fig.width=5}
+# Boxplot of 10 most important PC by diagnosis
+data.frame(wdbc_pca$x[,1:10], Diagnosis = brca$y) %>%
+  gather(key = "PC", value = "value", -Diagnosis) %>%
+  ggplot(aes(PC, value, fill = Diagnosis)) +
+  geom_boxplot() +
+  scale_fill_manual(name="Diagnosis",
+                      breaks=c("B", "M"),
+                      labels=c("Benign", "Malignant")
+                      ,values = c("#006699", "#993300")) +
+  ggtitle("10 most important PC by diagnosis") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+\newpage
+The graphs bellow is a two-dimensional scatter plot of the first two principal components. We can see that malignant data-points have a wider spread than the benign ones.
+```{r, fig.height=5, fig.width=6}
+# Scatterplot of PC1 versus PC2)
+data.frame(wdbc_pca$x[,1:2], Diagnosis = brca$y) %>%
+  ggplot(aes(PC1, PC2, color = Diagnosis)) +
+  geom_point(alpha = 0.6) +
+  stat_ellipse() +
+  xlab("PC1") +
+  ylab("PC2") +
+  scale_color_manual(name="Diagnosis", labels=c("Benign", "Malignant"),values = c("#006699", "#993300"))
+```
+As a result of the principal component analysis, we have seen that there are significant differences between benign and malignant samples, suggesting it should be possible to find prediction models with high performance levels. It theory, using only the first 10 components should be enough to achieve high performance but since our data set is relatively small, using all components in not require a significant amount of computing power. 
+
+# Model creation and validation
+## Model performance evaluation
+Before we start creating and testing various models, we need to explain how their performance will be evaluated. 
+
+The table below, called a confusion matrix, displays the 4 different combinations of predicted vs actual values from our models.
+
+|                        |  Diagnosis = Malignant  |  Diagnosis = Begnin  |
+|:----------------------:|:-----------------------:|:--------------------:|
+| Prediction = Malignant |   True positives (TP)   | False negatives (FP) |
+| Prediction = Begnin    |   False positives (FP)  |  True negatives (TN) |
+
+
+**Accuracy** is overall proportion that is predicted correctly:
+$$
+\mbox{Accuracy} = \frac{\mbox{TP}+{\mbox{TN}}}{\mbox{TP}+{\mbox{TN}}+{\mbox{FP}}+{\mbox{FN}}}
+$$
+\newpage
+**sensitivity** the the ability of the model to predict a positive outcome when the actual outcome is positive. In our case, correctly identify if the FNA sample with a malignant.
+$$
+\mbox{Sensitivity} = \frac{\mbox{TP}}{\mbox{TP + FP}}
+$$
+**specificity** is the the ability of the model to predict a positive outcome when the actual outcome is positive. In our case, correctly identify if the FNA sample with a benign.
+$$
+\mbox{Specificity} = \frac{\mbox{TN}}{{\mbox{TN}}+{\mbox{FP}}}
+$$
+**False negative rate** is the proportion of the true positive (malignant sample) for which the test result is negative (benign).
+$$
+\mbox{False negative rate} = \frac{\mbox{FN}}{\mbox{FN + TP}}
+$$
+**False positive rate** is the proportion of true negative (benign sample) for which the test result is positive (malignant).
+$$
+\mbox{False Positive Rate} = \frac{\mbox{FP}}{\mbox{FP + TN}}
+$$
+As mentioned, the main metrics used to select the best model are accuracy and sensitivity because of the potentially deadly consequences of a false negative test.
+
+## Data Preparation
+```{r}
+# scale x values 
+# scale x values 
+x_centered <- sweep(brca$x, 2, colMeans(brca$x))
+x_scaled <- sweep(x_centered, 2, colSds(brca$x), FUN = "/")
+
+# split brca$x and brca$y into 20% test and 80% training sets
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+train_index <- createDataPartition(brca$y, times = 1, p = 0.2, list = FALSE)
+wdbc_train <- list(x = x_scaled[-train_index,], y= brca$y[-train_index])
+wdbc_test <- list(x = x_scaled[train_index,], y= brca$y[train_index])
+
+# remove test_index
+rm(train_index)
+```
+### Create train and test sets
+Before going bulling models the wdbc data set was separate into 2 sibsets to ensure that data used to train the prediction models not the same as the data used to test the models and avoid biases over training. The following subsets have been created:
+
+* **wdbc_train** : 80% of the wdbc dataset of used for the data exploration and develop the recommendation model 
+* **wdbc_test** : 20% of the wdbc dataset used to validate the final prediction models 
+
+### Data Normalisation
+The wdbc data was also normalised before being used to train and test the models. The goal of normalisation is to change the values of numeric columns in the dataset to a common scale, without distorting differences in the ranges of values.
+
+## Overview of the models used
+Six different models have been evaluated:
+
+1. logistic regression
+2. loess regression
+3. linear discriminant analysis (LDA)
+4. quadratic discriminant analysis (QDA)
+5. k-nearest neighbors (KNN)
+6. random forest
+
+### logistic regression
+Logistic regression is widely used approach ti solve classification problems (e.g. B / M). The binary logistic model is used to estimate the probability of a binary response based on one or more predictors or independent variables.
+```{r}
+# Train logistic regression model
+train_glm <- train(wdbc_train$x, wdbc_train$y, method = "glm")
+# Generate regression predictions
+glm_preds <- predict(train_glm, wdbc_test$x)
+```
+\newpage
+
+### loess regression
+Loess (locally estimated scatterplot smoothing) is very flexible regression techniques. It uses a smoothing function that attempts to capture general patterns relationships while reducing the noise and it makes minimal assumptions about the relationships among variables.
+```{r}
+# Train loess model
+train_loess <- train(wdbc_train$x, wdbc_train$y, method = "gamLoess")
+# Generate loess predictions
+loess_preds <- predict(train_loess, wdbc_test$x)
+```
+
+### Linear discriminant analysis (LDA)
+Linear discriminant analysis is a dimensionality reduction technique that provides the highest possible discrimination among various classes. It is used in machine learning to find the linear combination of features, which can separate two or more classes of objects with best performance
+```{r}
+# Train LDA model
+train_lda <- train(wdbc_train$x, wdbc_train$y, method = "lda")
+# Generate LDA predictions
+lda_preds <- predict(train_lda, wdbc_test$x)  
+```
+
+### Quadratic discriminant analysis (QDA)
+QDA is a variant of LDA in which an individual covariance matrix is estimated for every class of observations. QDA is particularly useful if there is prior knowledge that individual classes exhibit distinct covariances.
+```{r}
+# Train QDA model
+train_qda <- train(wdbc_train$x, wdbc_train$y, method = "qda")
+# Generate QDA predictions
+qda_preds <- predict(train_qda, wdbc_test$x)
+```
+
+### K nearest neighbors
+The k-Nearest neighbour model (kNN) is a simple approach to supervised machine learning that assumes proximity equates to similarity it compares the closeness between observations that already exist in a data set and the ones that are newly formed. The machine does the math itself and selects the number of neighbours that need to be compared (k). It limits the occurrence of data underfitting and overfitting.
+```{r}
+# Train kNN model
+train_knn <- train(wdbc_train$x, wdbc_train$y, method = "knn", tuneGrid = data.frame(k = seq(3, 29, 2)))
+# Generate kNN predictions
+knn_preds <- predict(train_knn, wdbc_test$x)
+```
+
+### Random forest
+Random forest is an expansion of decision tree. It works by first constructing decision trees with training data, then fitting new data within one of the trees as a "random forest" Put simply, random forest averages your data to connect it to the nearest tree on the data scale.
+```{r}
+# Train random forest model, find best mtry, generate predictions, measure accuracy
+# Pick the mtry value
+tuning <- data.frame(mtry = seq(3, 29, 2))
+train_rf <- train(wdbc_train$x, wdbc_train$y, method = "rf", tuneGrid = tuning, importance = TRUE)
+# Generate random forest prediction
+rf_preds <- predict(train_rf, wdbc_test$x)
+```
+
+# Results 
+```{r}
+## Create data frame with models performance ##
+# Model names
+models <- c("Logistic regression", "Loess", "LDA", "QDA", "K nearest neighbors", "Random forest")
+
+# Models accuracy
+accuracy <- c(confusionMatrix(data = glm_preds, reference = wdbc_test$y, positive = "M")$overall["Accuracy"],
+               confusionMatrix(data = loess_preds, reference = wdbc_test$y, positive = "M")$overall["Accuracy"],
+               confusionMatrix(data = lda_preds, reference = wdbc_test$y, positive = "M")$overall["Accuracy"],
+               confusionMatrix(data = qda_preds, reference = wdbc_test$y, positive = "M")$overall["Accuracy"],
+               confusionMatrix(data = knn_preds, reference = wdbc_test$y, positive = "M")$overall["Accuracy"],
+               confusionMatrix(data = rf_preds, reference = wdbc_test$y, positive = "M")$overall["Accuracy"])
+
+# Models sensitivity
+sensitivity <- c(confusionMatrix(data = glm_preds, reference = wdbc_test$y, positive = "M")$byClass["Sensitivity"],
+           confusionMatrix(data = loess_preds, reference = wdbc_test$y, positive = "M")$byClass["Sensitivity"],
+           confusionMatrix(data = lda_preds, reference = wdbc_test$y, positive = "M")$byClass["Sensitivity"],
+           confusionMatrix(data = qda_preds, reference = wdbc_test$y, positive = "M")$byClass["Sensitivity"],
+           confusionMatrix(data = knn_preds, reference = wdbc_test$y, positive = "M")$byClass["Sensitivity"],
+           confusionMatrix(data = rf_preds, reference = wdbc_test$y, positive = "M")$byClass["Sensitivity"])
+
+# Models specificity
+specificity <- c(confusionMatrix(data = glm_preds, reference = wdbc_test$y, positive = "M")$byClass["Specificity"],
+             confusionMatrix(data = loess_preds, reference = wdbc_test$y, positive = "M")$byClass["Specificity"],
+             confusionMatrix(data = lda_preds, reference = wdbc_test$y, positive = "M")$byClass["Specificity"],
+             confusionMatrix(data = qda_preds, reference = wdbc_test$y, positive = "M")$byClass["Specificity"],
+             confusionMatrix(data = knn_preds, reference = wdbc_test$y, positive = "M")$byClass["Specificity"],
+             confusionMatrix(data = rf_preds, reference = wdbc_test$y, positive = "M")$byClass["Specificity"])
+
+# Created data frame with performance of models and add FN and FP rates
+models_perf <- data.frame(Model = models, Accuracy = accuracy, Sensitivity = sensitivity, Specificity = specificity) %>%  mutate("False Negative Rate" = 1 - Sensitivity, "False Positive Rate" = 1 - Specificity)
+
+```
+The performance of the 6 models used is sumarised in the table below:
+```{r}
+models_perf %>% kable(booktabs = T, format = "latex") %>%
+  kable_styling(position = "center", latex_options = c("scale_down", "striped"))
+```
+The model with the best performance is LDA with an accuracy of 99.1% and a sensitivity of 97.6%. The specificity of the LDA model is 100%. the loess model in the second best performing with an accuracy of 98.2% and a sensitivity of 97.6%.
+
+Comparing the accuracy of both models with the original peer-reviewed analysis of this dataset, which achieved the accuracy of 97.5% (Wolberg et al., 1995) we can say that the performance achieved in this project seems credible.
+
+# Conclusion
+The goal of this project was to create and test various models to predict whether a FNA sample was benign or malignant. The performance achieved satisfactory for this project but could be further improved using more advanced models, for example boosted algorithms that would increase the odds of correctly classifying samples. Using larger data sets, if available, to train the models would also improve their performance.
+

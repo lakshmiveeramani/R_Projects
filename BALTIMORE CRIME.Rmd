@@ -1,0 +1,256 @@
+---
+title: "Baltimore Crime"
+author: "Alex Gacheche"
+date: "3/2/2021"
+output: html_document
+---
+
+# Note: A few minutes for the process to take place.
+###Load the required packages.
+###These packages will be installed if required.
+```{R}
+if(!require(tidyverse)) install.packages("tidyverse")
+if(!require(caret)) install.packages("caret")
+if(!require(data.table)) install.packages("data.table")
+if(!require(splitstackshape)) install.packages("splitstackshape")
+if(!require(DT)) install.packages("DT")
+if(!require(lubridate)) install.packages("lubridate")
+if(!require(ggpubr)) install.packages("ggpubr")
+if(!require(patchwork)) install.packages("patchwork")
+if(!require(hrbrthemes)) install.packages("hrbrthemes")
+if(!require(scales)) install.packages("scales")
+if(!require(tidytext)) install.packages("tidytext")
+if(!require(ggalt))install.packages("ggalt")
+if(!require(purrr))install.packages("purrr")
+if(!require(randomForest))install.packages("randomForest")
+if(!require(caTools))install.packages(caTools)
+##Load libraries.
+library(tidyverse)
+library(lubridate)
+library(ggalt)
+library(ggpubr)
+library(caret)
+library(data.table)
+library(DT)
+library(scales)   
+library(patchwork) 
+library(hrbrthemes)
+library(randomForest)   
+library(tidytext)  
+library(splitstackshape)    
+library(purrr)
+library(caTools)
+library(broom)
+```
+
+###Load the required data.
+```{r}
+CRIMEDATA <-read.csv("https://query.data.world/s/jf3dsgrbunfoejj62oqtjbaa3ujx2a") 
+CRIMEDATA
+```
+
+# THE DATASETS FIRST INFORMATION.
+```{r}
+head(CRIMEDATA)
+##Year column for each crime observation.
+CRIMEDATA$CrimeDate <- as.Date(CRIMEDATA$CrimeDate, format = "%m/%d/%Y")
+CRIMEDATA$Year <- as.numeric(format(CRIMEDATA$CrimeDate, "%Y"))
+head(CRIMEDATA)
+str(CRIMEDATA)
+#Missing value check
+colSums(is.na(CRIMEDATA))
+#Class imbalance check.
+table(CRIMEDATA$Class)
+prop.table(table(CRIMEDATA$Class))
+#Data summary
+summary (CRIMEDATA)
+```
+
+####70% of data will be the validation set.set.seed(10000)
+```{r}
+crime_index <- sample(1:nrow(CRIMEDATA),0.7*nrow(CRIMEDATA))
+length(crime_index)
+edx_baltimore_crime <- CRIMEDATA[crime_index,]
+temp_baltimore_crime <- CRIMEDATA[-crime_index,]
+```
+#Data Visualization
+#Analysis: NumberofCrimes,  across 2011-2016
+#1. Number of crimes per region(District) 
+#Tabular Representation
+```{r}
+baltimore_District_Crime_Count <- edx_baltimore_crime %>% 
+  group_by(Region = District) %>%
+  summarise(NumberofCrime=sum(Total.Incidents,na.rm = TRUE)) %>% 
+  arrange(desc(NumberofCrime))
+###Tabular representation.
+
+datatable(baltimore_District_Crime_Count,filter="bottom", rownames = FALSE, options = list(pageLength = 49)) %>%
+  formatRound('NumberofCrime',mark = ",", digits=0, interval = 3, ) 
+
+#Graphical Representation (Bar Graph)
+ggplot(subset(CRIMEDATA)) +
+  aes(x = District) +
+  scale_y_continuous(limit = c(0,60000))+
+  geom_bar(stat = "count",fill = 'red') + 
+  labs(title = "District Crime Rate", y = "Number of Crimes", x = "Districts") +
+  theme(axis.text.x = element_text(angle = 40, size = 7)) 
+  
+  
+#Conclusion: NorthEastern region has the highest number of crimes.
+```
+
+#####------------------------------------------------------------------------------------------------
+##2.Number of Crimes per Year.
+
+```{r}
+Baltimore_Annual_Crime_Count <- CRIMEDATA%>% 
+  group_by(Year = Year) %>%
+  summarise(NumberofCrime=sum(Total.Incidents,na.rm = TRUE)) %>%   
+  arrange(desc(NumberofCrime))
+
+datatable(Baltimore_Annual_Crime_Count, filter="bottom",rownames = FALSE,options = list(scrollX=TRUE) ) %>%
+  formatRound('NumberofCrime',digits=0, interval = 3, mark = ",") 
+#Graphical Representation (Bar Graph)
+ggplot(subset(CRIMEDATA)) +
+  aes(x = Year) +
+  theme(axis.text.x = element_text(size = 9, color= "navyblue",face = 2, angle =70)) +
+  geom_bar(stat = "count",fill = 'maroon') + 
+  geom_text(stat = "count",fontface = "bold", vjust = -1.0, aes(label = ..count..), color = "black") +
+  labs(y = "Crime Numbers", title = "Number of crimes Per Year",x = "Years") +
+  scale_y_continuous(limit = c(0,60000))
+
+#Conclusion: 2016 records the least number of crimes
+```
+#3.Number of Crimes per neighborhood.
+```{r}
+baltimore_Neighborhood_Crime_Count <- CRIMEDATA %>% 
+  group_by(Neighborhood = Neighborhood) %>%
+  summarise(NumberofCrime=sum(Total.Incidents,na.rm = TRUE)) %>% 
+  arrange(desc(NumberofCrime))
+
+#Tabular Representation
+datatable(baltimore_Neighborhood_Crime_Count, filter="top", rownames = FALSE, options = list(pageLength = 49) ) %>%
+  formatRound('NumberofCrime', mark = ",",interval = 3, digits=0,  ) 
+
+###Graphical Representation (Bar Graph)
+ggplot(subset(CRIMEDATA)) +
+  aes(x = Neighborhood) +
+  labs(x = "Neighborhood", title = " Neighborhood Crime Rate",y = "Crime Number") +
+  geom_bar(stat = "count",fill = 'Yellow') + 
+  theme(axis.text.x = element_text(angle = 90, size = 7))+
+  scale_y_continuous(limit = c(0,10000))
+  
+###Downtown is the neighborhood with the highest number of crimes
+```
+#4. The category of crimes with the highest crime number.
+
+
+```{r}
+Crime_Description <- edx_baltimore_crimes %>% 
+  group_by(Description) %>%
+  summarize(NumberofCrimes = n()) %>%
+  arrange(desc(NumberofCrimes))
+#Tabular Representation
+datatable(Crime_Description, filter="top", rownames = FALSE, , options = list(pageLength = 50)) 
+
+
+#Graphical Representation (Yearly Timeline) (Line Graph)
+edx_baltimore_crimes %>% 
+  group_by(Yearly= Year,Description) %>% 
+  summarise(NumberofCrime=sum(Total.Incidents,na.rm = TRUE)) %>% 
+  ggplot(aes(Yearly,NumberofCrime))+
+  facet_wrap(~Description,scales = "free")+
+  geom_line(aes(color=Description),size=0.81)+
+  labs(y="NumberofCrime",x=" ")+
+  expand_limits(y=0)+ 
+  theme_pubclean()+
+  theme(legend.position = "none", strip.text=element_text(color = "lightblue", face="bold"), strip.background = element_rect(fill="purple"))
+```
+
+#Machine Learning Algorithm
+#1. Linear regression
+
+```{r}
+## Description : "LARCENY" & "COMMON ASSAULT"is the main crime contributor in Baltimore 2011-2016.  
+## A linear Regression Model to access the category of crimes with the highest number of crimes. 
+
+Crime_Description <- as.numeric(edx_baltimore_crime$Description %in% c("LARCENY","COMMON ASSAULT"))
+lm_fit_Description <- lm(Crime_Description ~ Total.Incidents , data=CRIMEDATA[c(crime_index), ])
+summary(lm_fit_Description)
+###Coefficients
+cof <- tidy(lm_fit_Description, conf.int = TRUE)
+```
+
+###RMSE
+```{r}
+##RMSE Calculation
+MSE <- function(real_count, predict_count){
+  sqrt(mean((real_count - predict_count)^2))
+}
+
+#Choose Lambda Values for tuning
+lambdas <- seq(0,6,1)
+rmses <- sapply(lambdas, function(l){
+  me <- mean(edx_baltimore_crime$Total.Incidents)
+  
+  D_i <- edx_baltimore_crime %>%
+    group_by(CRIMEDATA$CrimeCode) %>%
+    summarize(D_i = sum(Total.Incidents - me)/(n() + l))
+  
+  a_c <- edx_baltimore_crime %>%
+    left_join(D_i, by='CRIMEDATA$CrimeCode') %>% 
+    group_by(CRIMEDATA$Description) %>%
+    summarize(a_c = sum(Total.Incidents - D_i - me)/(n() +l))
+  
+  predict_count <- edx_baltimore_crime %>%
+    left_join(D_i, by = "CRIMEDATA$CrimeCode ") %>%
+    left_join(a_c, by = "CRIMEDATA$Description") %>%
+    mutate(pdtn = mu + D_i +  a_c) %>% .$pdtn
+  
+  return(RMSE(predict_count, edx_baltimore_crime$Total.Incidents))
+})
+
+qplot(lambdas, rmses)
+lamda <- lambdas[which.min(rmses)]
+paste('Optimum RMSE ',min(rmses),'has been achieved using Lambda',lamda)
+```
+
+##kNN
+```{r}
+#Create Train and Test Data Set
+set.seed(1, sample.kind="Rounding")
+
+
+Knn_baltimore_crimes <- CRIMEDATA %>% 
+  filter(CRIMEDATA$Description %in% c("LARCENY","COMMON ASSAULT")) %>% group_by(District,Description)%>% 
+  summarise(NumberofCrime = sum(CRIMEDATA$Total.Incidents) ) %>% ungroup() 
+
+#large dataset handling.
+y <- Knn_baltimore_crimes$NumberofCrime
+apt <- rbinom(length(y),1,0.4)    # choose an average of 40% to apt at random
+apt<- as.logical(apt)
+loud <- rnorm(sum(apt),1000,200) 
+Knn_baltimore_crimes$NumberofCrime[apt] <- y[apt] + loud      #
+
+
+Baltimoretest_index <- createDataPartition(Knn_baltimore_crimes$Description, times = 1, p = 0.3, list = FALSE)
+test_baltimorecrime_set <- as.data.frame(Knn_baltimore_crimes[Baltimoretest_index, ])
+train_baltimorecrime_set <- as.data.frame(Knn_baltimore_crimes[-Baltimoretest_index, ])
+
+ab <- seq(9, 27,3)
+F_1 <- sapply(ab, function(k){
+  knn_fit <- knn3(as.character(Description) ~ as.numeric(NumberofCrime), data = train_baltimorecrime_set, k = k, use.all = FALSE)
+  y_h <- predict(knn_fit, test_baltimorecrime_set, type = "class") %>% 
+    factor(levels = levels(as.character(train_baltimorecrime_set$Description)))
+  F_meas(data = y_h, reference = as.character(test_baltimorecrime_set$Description))
+})
+
+max(F_1)
+ab[which.max(F_1)]
+```
+###Random Forest Model.
+```{r}
+#Random Forest
+train_Random <- randomForest(as.factor(Description) ~ ., data=train_baltimorecrime_set)
+confusionMatrix(predict(train_Random, test_baltimorecrime_set), as.factor(test_baltimorecrime_set$Description))$overall["Accuracy"] 
+```
